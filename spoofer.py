@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import base64
 import json
+import random
 import sys
 import time
 import uuid
@@ -33,7 +34,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass, asdict
 from pathlib import Path
-from typing import Iterator, Sequence
+from typing import Iterator, Sequence, Callable
 
 # paths
 ROOT = Path(__file__).resolve().parent
@@ -45,9 +46,15 @@ SCIENCE_URL = "https://discord.com/api/v9/science"
 PROPERTIES_URL = "https://cordapi.dolfi.es/api/v2/properties/windows"  # current super_props, local fallback
 GAMES_CDN_URL = "https://cdn.discordapp.com/detectables/games.json"  # used if games.json isn't there
 
-BATCH_SIZE = 50           # events per /science request
-BATCH_DELAY = 0.3         # seconds between requests
-AUTH_MAX_AGE = 12 * 3600  # refetch the analytics token once the cache is older than this
+# Rate‑limiting parameters – randomized to avoid detection
+BATCH_SIZE_MIN = 30               # minimum events per batch
+BATCH_SIZE_MAX = 50               # maximum events per batch
+BATCH_DELAY_MIN = 0.5             # seconds between batches (lower bound)
+BATCH_DELAY_MAX = 2.0             # seconds between batches (upper bound)
+PAUSE_EVERY_N_BATCHES = 10        # after this many batches, take a longer break
+PAUSE_DURATION_MIN = 5.0          # minimum break duration (seconds)
+PAUSE_DURATION_MAX = 15.0         # maximum break duration (seconds)
+AUTH_MAX_AGE = 12 * 3600          # refetch the analytics token once the cache is older than this
 DEBUG = False
 
 # client identity
@@ -75,30 +82,42 @@ class Console:
     RULE = "─" * 44
 
     def __init__(self) -> None:
+        # Don't try to reconfigure stdout if it's already configured
         try:
-            sys.stdout.reconfigure(encoding="utf-8")  # glyphs must encode even when stdout is piped
+            if hasattr(sys.stdout, 'reconfigure'):
+                sys.stdout.reconfigure(encoding="utf-8")
         except Exception:
             pass
+        
+        # Enable ANSI on Windows
         if sys.platform == "win32":
             self._enable_ansi()
+        
+        # Check if we're in a terminal that supports colors
+        self._has_colors = hasattr(sys.stdout, 'isatty') and sys.stdout.isatty()
+        if not self._has_colors:
+            # Disable colors if not in a terminal
+            self.RED = self.ORANGE = self.GREEN = self.YELLOW = self.WHITE = self.GREY = self.RESET = ""
 
     @staticmethod
     def _enable_ansi() -> None:
         # flip on virtual terminal processing so ansi colors render on windows
-        import ctypes
-
-        kernel32 = ctypes.windll.kernel32
-        handle = kernel32.GetStdHandle(-11)  # std_output_handle
-        mode = ctypes.c_uint32()
-        if kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
-            kernel32.SetConsoleMode(handle, mode.value | 0x0004)
+        try:
+            import ctypes
+            kernel32 = ctypes.windll.kernel32
+            handle = kernel32.GetStdHandle(-11)  # std_output_handle
+            mode = ctypes.c_uint32()
+            if kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+                kernel32.SetConsoleMode(handle, mode.value | 0x0004)
+        except Exception:
+            pass
 
     def _stamp(self) -> str:
         return f"{self.GREY}{time.strftime('%H:%M:%S')}{self.RESET}"
 
     def _line(self, glyph: str, target: str, detail: str, color: str) -> None:
         print(f"  {self._stamp()} {glyph} {self.WHITE}{target}{self.RESET} "
-              f"{self.GREY}·{self.RESET} {color}{detail}{self.RESET}")
+              f"{self.GREY}·{self.RESET} {color}{detail}{self.RESET}", flush=True)
 
     def ok(self, target: str, detail: str) -> None:
         self._line(f"{self.GREEN}✓{self.RESET}", target, detail, self.GREEN)
@@ -113,21 +132,26 @@ class Console:
         self._line(f"{self.RED}✗{self.RESET}", target, detail, self.RED)
 
     def info(self, detail: str) -> None:
-        print(f"  {self._stamp()} {self.GREY}·{self.RESET} {self.WHITE}{detail}{self.RESET}")
+        print(f"  {self._stamp()} {self.GREY}·{self.RESET} {self.WHITE}{detail}{self.RESET}", flush=True)
+
+    def game_detail(self, game: str, detail: str) -> None:
+        print(f"  {self._stamp()} {self.GREY}·{self.RESET} {self.WHITE}{game}{self.RESET} "
+              f"{self.GREY}·{self.RESET} {self.GREEN}{detail}{self.RESET}", flush=True)
 
     def rule(self) -> None:
-        print(f"  {self.GREY}{self.RULE}{self.RESET}")
+        print(f"  {self.GREY}{self.RULE}{self.RESET}", flush=True)
 
     def clear(self) -> None:
-        # clear screen + scrollback, home the cursor (vt processing is enabled)
-        print("\x1b[2J\x1b[3J\x1b[H", end="")
+        # Only clear if we're in a terminal
+        if self._has_colors:
+            print("\x1b[2J\x1b[3J\x1b[H", end="", flush=True)
 
     def banner(self) -> None:
         self.clear()
         print()
         print(f"  {self.ORANGE}spoofer{self.RESET} {self.GREY}·{self.RESET} {self.WHITE}discord badges{self.RESET}")
         print(f"    {self.GREY}by revere group{self.RESET}")
-        print()
+        print(flush=True)
 
 
 @dataclass
@@ -143,8 +167,11 @@ class State:
     @classmethod
     def load(cls) -> "State":
         if STATE_FILE.exists():
-            data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
-            return cls(**{k: data.get(k, v) for k, v in cls().__dict__.items()})
+            try:
+                data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+                return cls(**{k: data.get(k, v) for k, v in cls().__dict__.items()})
+            except Exception:
+                return cls()
         return cls()
 
     def save(self) -> None:
@@ -271,7 +298,11 @@ def load_games() -> list[Game]:
             raw = _download_games()
         except Exception:
             return []
-    data = json.loads(raw)
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+    
     games: list[Game] = []
     seen: set[str] = set()
     for entry in data:
@@ -419,38 +450,87 @@ class ScienceClient:
             return 0
 
 
-def _chunked(items: Sequence[Game], size: int) -> Iterator[Sequence[Game]]:
-    for start in range(0, len(items), size):
-        yield items[start:start + size]
+def _chunked_random(items: Sequence[Game], min_size: int, max_size: int) -> Iterator[Sequence[Game]]:
+    """Yield chunks of random sizes between min_size and max_size (inclusive)."""
+    i = 0
+    n = len(items)
+    while i < n:
+        size = random.randint(min_size, max_size)
+        if i + size > n:
+            size = n - i
+        yield items[i:i+size]
+        i += size
 
 
 class Spoofer:
-    """sends events in batches and logs progress."""
+    """sends events in batches with randomised rate limiting and logs progress."""
 
     def __init__(self, client: ScienceClient, console: Console) -> None:
         self.client = client
         self.console = console
+        self.batch_counter = 0
 
-    def run(self, games: Sequence[Game], build_events) -> int:
-        # build_events(game) -> list of event dicts to send for that game
-        total = len(games)
+    def run(self, games_with_hours: Sequence[tuple[Game, int]], progress_callback: Callable[[Game, int], None] | None = None) -> int:
+        """
+        Send events for games with their assigned hours.
+        
+        Args:
+            games_with_hours: List of (game, hours) tuples
+            progress_callback: Optional callback called before each game is processed
+            
+        Returns:
+            Number of games successfully processed
+        """
+        total = len(games_with_hours)
         sent_ok = 0
-        for request_no, chunk in enumerate(_chunked(games, BATCH_SIZE), start=1):
+        self.batch_counter = 0
+        
+        # Flatten into chunks with events
+        for chunk in self._chunk_games_with_hours(games_with_hours):
+            self.batch_counter += 1
             events = []
-            for game in chunk:
-                events.extend(build_events(game))
+            games_in_chunk = []
+            
+            for game, hours in chunk:
+                if progress_callback:
+                    progress_callback(game, hours)
+                duration_ms = int(hours * 3600 * 1000)
+                events.extend(self.client.build_session(game, duration_ms))
+                games_in_chunk.append(game)
+            
             status = self.client.post(events)
             if status == 204:
-                sent_ok += len(chunk)
-                self.console.sent(f"batch {request_no}", f"{sent_ok}/{total} games")
+                sent_ok += len(games_in_chunk)
+                self.console.sent(f"batch {self.batch_counter}", f"{sent_ok}/{total} games")
             elif status in (401, 403):
-                self.console.err(f"batch {request_no}",
+                self.console.err(f"batch {self.batch_counter}",
                                  f"[{status}] auth rejected · refresh (option 3) with a fresh cookie")
                 return sent_ok
             else:
-                self.console.warn(f"batch {request_no}", f"[{status}]")
-            time.sleep(BATCH_DELAY)
+                self.console.warn(f"batch {self.batch_counter}", f"[{status}]")
+            
+            # Random jittered delay between batches
+            delay = random.uniform(BATCH_DELAY_MIN, BATCH_DELAY_MAX)
+            time.sleep(delay)
+            
+            # Occasionally take a longer break to mimic human behaviour
+            if self.batch_counter % PAUSE_EVERY_N_BATCHES == 0:
+                pause = random.uniform(PAUSE_DURATION_MIN, PAUSE_DURATION_MAX)
+                self.console.info(f"pausing for {pause:.1f}s to avoid rate limits")
+                time.sleep(pause)
+        
         return sent_ok
+    
+    def _chunk_games_with_hours(self, games_with_hours: Sequence[tuple[Game, int]]) -> Iterator[Sequence[tuple[Game, int]]]:
+        """Yield chunks of random sizes."""
+        i = 0
+        n = len(games_with_hours)
+        while i < n:
+            size = random.randint(BATCH_SIZE_MIN, BATCH_SIZE_MAX)
+            if i + size > n:
+                size = n - i
+            yield games_with_hours[i:i+size]
+            i += size
 
 
 class App:
@@ -537,48 +617,179 @@ class App:
             self._new_session()
         return bool(self.state.analytics_token)
 
+    # Helper functions for selecting games and hours
+
+    def _select_games(self) -> list[Game]:
+        """Prompt user for how many games to select and return random selection."""
+        max_games = len(self.games)
+        self.console.info(f"available: {self.console.GREEN}{max_games}{self.console.WHITE} games")
+        
+        while True:
+            raw = input(f"  {self.console.GREY}how many games to process? (1-{max_games}):{self.console.RESET} ").strip()
+            try:
+                count = int(raw)
+                if 1 <= count <= max_games:
+                    break
+                self.console.err("input", f"must be between 1 and {max_games}")
+            except ValueError:
+                self.console.err("input", "enter a number")
+        
+        selected = random.sample(self.games, count)
+        return selected
+
+    def _get_hours_for_games(self, games: list[Game]) -> list[tuple[Game, float]]:
+        """Get hours for each game, offering multiple input modes."""
+        self.console.rule()
+        self.console.info("hour assignment options:")
+        print(f"  {self.console.ORANGE}1{self.console.RESET} {self.console.WHITE}random range{self.console.RESET} "
+              f"{self.console.GREY}· each game gets random hours in a range{self.console.RESET}")
+        print(f"  {self.console.ORANGE}2{self.console.RESET} {self.console.WHITE}single value{self.console.RESET} "
+              f"{self.console.GREY}· all games get the same hours{self.console.RESET}")
+        print(f"  {self.console.ORANGE}3{self.console.RESET} {self.console.WHITE}per-game input{self.console.RESET} "
+              f"{self.console.GREY}· manually enter hours for each game{self.console.RESET}")
+        
+        choice = ""
+        while choice not in ("1", "2", "3"):
+            choice = input(f"  {self.console.ORANGE}›{self.console.RESET} ").strip()
+        
+        result = []
+        
+        if choice == "1":
+            # Random range
+            self.console.info("enter min and max hours (e.g., 0.5 5.0)")
+            while True:
+                raw = input(f"  {self.console.GREY}min max:{self.console.RESET} ").strip()
+                parts = raw.split()
+                if len(parts) == 2:
+                    try:
+                        min_h = float(parts[0])
+                        max_h = float(parts[1])
+                        if min_h <= max_h and min_h >= 0:
+                            break
+                        self.console.err("input", "min must be <= max and both >= 0")
+                    except ValueError:
+                        self.console.err("input", "enter two numbers")
+                else:
+                    self.console.err("input", "enter min and max separated by space")
+            
+            for game in games:
+                hours = random.uniform(min_h, max_h)
+                hours = round(hours, 2)  # Round to 2 decimal places
+                result.append((game, hours))
+            
+        elif choice == "2":
+            # Single value
+            while True:
+                raw = input(f"  {self.console.GREY}hours per game:{self.console.RESET} ").strip()
+                try:
+                    hours = float(raw)
+                    if hours >= 0:
+                        break
+                    self.console.err("input", "hours must be >= 0")
+                except ValueError:
+                    self.console.err("input", "enter a number")
+            
+            for game in games:
+                result.append((game, hours))
+            
+        else:  # choice == "3"
+            # Per-game input
+            self.console.info(f"enter hours for each of the {len(games)} games:")
+            for i, game in enumerate(games, 1):
+                while True:
+                    raw = input(f"  {self.console.GREY}[{i}/{len(games)}] {game.name} (hours):{self.console.RESET} ").strip()
+                    try:
+                        hours = float(raw)
+                        if hours >= 0:
+                            result.append((game, hours))
+                            break
+                        self.console.err("input", "hours must be >= 0")
+                    except ValueError:
+                        self.console.err("input", "enter a number")
+        
+        return result
+
+    def _show_summary(self, games_with_hours: list[tuple[Game, float]]) -> None:
+        """Display a summary of the games and hours to be processed."""
+        self.console.rule()
+        total_hours = sum(hours for _, hours in games_with_hours)
+        self.console.info(f"processing {self.console.ORANGE}{len(games_with_hours)}{self.console.WHITE} games")
+        self.console.info(f"total hours: {self.console.ORANGE}{total_hours:.2f}h{self.console.WHITE} "
+                         f"({self.console.ORANGE}{total_hours * 60:.0f}{self.console.WHITE} minutes)")
+        
+        # Show a few examples if there are many games
+        if len(games_with_hours) <= 10:
+            for game, hours in games_with_hours:
+                self.console.game_detail(game.name, f"{hours:.2f}h")
+        else:
+            for game, hours in games_with_hours[:5]:
+                self.console.game_detail(game.name, f"{hours:.2f}h")
+            self.console.info(f"... and {len(games_with_hours) - 5} more games")
+        
+        self.console.rule()
+
     # modules
 
     def module_playtime(self) -> None:
         if not self._require_ready():
             return
-        raw = input(f"  {self.console.GREY}hours per game:{self.console.RESET} ").strip()
-        try:
-            hours = float(raw)
-        except ValueError:
-            self.console.err("input", "invalid hours")
+        
+        # Select games
+        games = self._select_games()
+        
+        # Get hours for each game
+        games_with_hours = self._get_hours_for_games(games)
+        
+        # Show summary
+        self._show_summary(games_with_hours)
+        
+        # Confirm
+        confirm = input(f"  {self.console.GREY}proceed? (y/n):{self.console.RESET} ").strip().lower()
+        if confirm != 'y':
+            self.console.info("cancelled")
             return
-        duration_ms = int(hours * 3600 * 1000)
+        
         print()
-        self.console.info(
-            f"claiming {self.console.ORANGE}{hours:g}h{self.console.WHITE} on "
-            f"{self.console.ORANGE}{len(self.games)}{self.console.WHITE} games "
-            f"{self.console.GREY}·{self.console.WHITE} {len(self.games) * hours:,.0f}h total"
-        )
         self.console.rule()
-        ok = Spoofer(self.client, self.console).run(
-            self.games,
-            lambda g: self.client.build_session(g, duration_ms),
-        )
+        
+        # Process with progress callback
+        def progress_callback(game: Game, hours: float) -> None:
+            self.console.game_detail(game.name, f"{hours:.2f}h")
+        
+        ok = Spoofer(self.client, self.console).run(games_with_hours, progress_callback)
+        
+        total_hours = sum(hours for _, hours in games_with_hours)
+        avg_hours = total_hours / len(games_with_hours) if games_with_hours else 0
         print()
-        self.console.ok("complete", f"{ok}/{len(self.games)} games · {ok * hours:,.0f}h claimed")
+        self.console.ok("complete", f"{ok}/{len(games_with_hours)} games · {avg_hours:.2f}h avg")
 
     def module_played_count(self) -> None:
         if not self._require_ready():
             return
-        print()
-        self.console.info(
-            f"registering {self.console.ORANGE}{len(self.games)}{self.console.WHITE} games as played "
-            f"{self.console.GREY}·{self.console.WHITE} 1m each"
-        )
+        
+        # Select games
+        games = self._select_games()
+        
+        # All games get 1 minute
+        games_with_hours = [(game, 1.0/60.0) for game in games]  # 1 minute in hours
+        
         self.console.rule()
-        # launch_game drives the played count; the open/close heartbeats add the minute
-        ok = Spoofer(self.client, self.console).run(
-            self.games,
-            lambda g: self.client.build_session(g, 60 * 1000),
-        )
+        self.console.info(f"marking {self.console.ORANGE}{len(games)}{self.console.WHITE} games as played")
+        self.console.rule()
+        
+        # Confirm
+        confirm = input(f"  {self.console.GREY}proceed? (y/n):{self.console.RESET} ").strip().lower()
+        if confirm != 'y':
+            self.console.info("cancelled")
+            return
+        
         print()
-        self.console.ok("complete", f"{ok}/{len(self.games)} games marked played")
+        self.console.rule()
+        
+        ok = Spoofer(self.client, self.console).run(games_with_hours)
+        
+        print()
+        self.console.ok("complete", f"{ok}/{len(games)} games marked played")
 
     # menu
 

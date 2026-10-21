@@ -25,17 +25,20 @@ this breaks discord tos. your account, your problem.
 from __future__ import annotations
 
 import base64
+import http.client
 import json
 import os
+import random
+import ssl
 import subprocess
 import sys
 import tempfile
 import time
-import uuid
-import webbrowser
 import urllib.error
 import urllib.request
-from dataclasses import dataclass, asdict
+import uuid
+import webbrowser
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Iterator, Sequence
 
@@ -46,6 +49,8 @@ STATE_FILE = ROOT / "science_state.json"             # token, cookie, cached aut
 
 ME_URL = "https://discord.com/api/v9/users/@me?with_analytics_token=true"
 SCIENCE_URL = "https://discord.com/api/v9/science"
+SCIENCE_HOST = "discord.com"
+SCIENCE_PATH = "/api/v9/science"
 PROPERTIES_URL = "https://cordapi.dolfi.es/api/v2/properties/windows"  # current super_props, local fallback
 GAMES_CDN_URL = "https://cdn.discordapp.com/detectables/games.json"  # used if games.json isn't there
 SUBSCRIBE_URL = "https://www.youtube.com/@solasity?sub_confirmation=1"
@@ -317,14 +322,28 @@ class State:
     @classmethod
     def load(cls) -> "State":
         if STATE_FILE.exists():
-            data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
-            state = cls(**{k: data.get(k, v) for k, v in cls().__dict__.items() if k != "used_games"})
-            state.used_games = data.get("used_games", [])
-            return state
+            try:
+                data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+                state = cls(**{k: data.get(k, v) for k, v in cls().__dict__.items() if k != "used_games"})
+                state.used_games = data.get("used_games", [])
+                return state
+            except Exception:
+                pass
         return cls()
 
     def save(self) -> None:
-        STATE_FILE.write_text(json.dumps(asdict(self), indent=2), encoding="utf-8")
+        data = json.dumps(asdict(self), indent=2)
+        temp_file = STATE_FILE.with_suffix(f".tmp_{os.getpid()}")
+        try:
+            temp_file.write_text(data, encoding="utf-8")
+            temp_file.replace(STATE_FILE)
+        except Exception:
+            STATE_FILE.write_text(data, encoding="utf-8")
+            if temp_file.exists():
+                try:
+                    temp_file.unlink()
+                except OSError:
+                    pass
 
     @property
     def is_stale(self) -> bool:
@@ -486,14 +505,31 @@ class ScienceClient:
         self.state = state
         self.session = session
         self._seq = 0
+        self._ssl_ctx = ssl.create_default_context()
+        self._conn: http.client.HTTPSConnection | None = None
+
+    def close(self) -> None:
+        if self._conn is not None:
+            try:
+                self._conn.close()
+            except Exception:
+                pass
+            self._conn = None
+
+    def _get_connection(self) -> http.client.HTTPSConnection:
+        if self._conn is None:
+            self._conn = http.client.HTTPSConnection(
+                SCIENCE_HOST, 443, context=self._ssl_ctx, timeout=15
+            )
+        return self._conn
 
     def _next_seq(self) -> int:
         # real clients use a running counter across the whole session
         self._seq += 1
         return self._seq
 
-    def build_launch(self, game: Game) -> dict:
-        now = int(time.time() * 1000)
+    def build_launch(self, game: Game, ts: int | None = None) -> dict:
+        now = int(time.time() * 1000) if ts is None else ts
         props = {
             "client_track_timestamp": now,
             "client_heartbeat_session_id": self.session.heartbeat_session,
@@ -571,18 +607,19 @@ class ScienceClient:
         sid = str(uuid.uuid4())
         now = int(time.time() * 1000)
         start = now - duration_ms
-        if start < 0: # duration too large to backdate sensibly
+        if start < 0:  # duration too large to backdate sensibly
             start = now
+        jitter = random.randint(120, 680)
         return [
             self.build_heartbeat(game, 0, sid, initial=True, final=False, ts=start),
-            self.build_launch(game),
+            self.build_launch(game, ts=start + jitter),
             self.build_heartbeat(game, duration_ms, sid, initial=False, final=True, ts=now),
         ]
 
-    def post(self, events: Sequence[dict]) -> int:
+    def post(self, events: Sequence[dict]) -> tuple[int, float]:
         """post a batch. returns the http status (204 = accepted)."""
         payload = {"token": self.state.analytics_token, "events": list(events)}
-        body = json.dumps(payload).encode("utf-8")
+        body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
         headers = {
             "accept": "*/*",
             "accept-language": "en-GB",
@@ -596,6 +633,7 @@ class ScienceClient:
             "x-discord-locale": "en-GB",
             "x-discord-timezone": "Europe/Oslo",
             "x-super-properties": self.session.super_props,
+            "connection": "keep-alive",
         }
         if DEBUG:
             print("\n" + "=" * 72)
@@ -603,14 +641,33 @@ class ScienceClient:
             print("headers:", json.dumps(headers, indent=2))
             print("body:", json.dumps(payload, indent=2))
             print("=" * 72)
-        request = urllib.request.Request(SCIENCE_URL, data=body, method="POST", headers=headers)
-        try:
-            with urllib.request.urlopen(request, timeout=15) as response:
-                return response.status
-        except urllib.error.HTTPError as exc:
-            return exc.code
-        except Exception:
-            return 0
+
+        for attempt in range(2):
+            try:
+                conn = self._get_connection()
+                conn.request("POST", SCIENCE_PATH, body=body, headers=headers)
+                resp = conn.getresponse()
+                status = resp.status
+                raw_retry = resp.getheader("Retry-After")
+                resp.read()
+
+                retry_after = 0.0
+                if raw_retry:
+                    try:
+                        retry_after = float(raw_retry)
+                    except ValueError:
+                        retry_after = 2.0
+
+                return status, retry_after
+            except (http.client.RemoteDisconnected, BrokenPipeError, ConnectionResetError, OSError):
+                self.close()
+                if attempt == 1:
+                    return 0, 0.0
+            except Exception:
+                self.close()
+                return 0, 0.0
+
+        return 0, 0.0
 
 
 def _chunked(items: Sequence[Game], size: int) -> Iterator[Sequence[Game]]:
@@ -629,20 +686,39 @@ class Spoofer:
         # build_events(game) -> list of event dicts to send for that game
         total = len(games)
         sent_ok = 0
-        for request_no, chunk in enumerate(_chunked(games, BATCH_SIZE), start=1):
+        chunks = list(_chunked(games, BATCH_SIZE))
+
+        for request_no, chunk in enumerate(chunks, start=1):
             events = []
             for game in chunk:
                 events.extend(build_events(game))
-            status = self.client.post(events)
-            if status == 204:
-                sent_ok += len(chunk)
-                self.console.sent(f"batch {request_no}", f"{sent_ok}/{total} games")
-            elif status in (401, 403):
-                self.console.err(f"batch {request_no}",
-                                 f"[{status}] auth rejected · refresh (option 3) with a fresh cookie")
-                return sent_ok
-            else:
-                self.console.warn(f"batch {request_no}", f"[{status}]")
+
+            max_retries = 3
+            status = 0
+            while max_retries > 0:
+                status, retry_after = self.client.post(events)
+
+                if status == 204:
+                    sent_ok += len(chunk)
+                    self.console.sent(f"batch {request_no}", f"{sent_ok}/{total} games")
+                    break
+                elif status == 429:
+                    sleep_time = max(retry_after, 1.5)
+                    self.console.warn(f"batch {request_no}", f"[429] rate limited · waiting {sleep_time:.1f}s")
+                    time.sleep(sleep_time)
+                    max_retries -= 1
+                elif status in (401, 403):
+                    self.console.err(f"batch {request_no}",
+                                     f"[{status}] auth rejected · refresh (option 3) with a fresh cookie")
+                    return sent_ok
+                else:
+                    self.console.warn(f"batch {request_no}", f"[{status}]")
+                    time.sleep(1.0)
+                    max_retries -= 1
+
+            if status != 204 and max_retries == 0:
+                self.console.err(f"batch {request_no}", f"failed after retries [{status}]")
+
             time.sleep(BATCH_DELAY)
         return sent_ok
 
@@ -767,6 +843,8 @@ class App:
         self.menu()
 
     def _new_session(self) -> None:
+        if self.client:
+            self.client.close()
         self.session = Session.new()
         self.client = ScienceClient(self.state, self.session)
 
@@ -841,8 +919,11 @@ class App:
         raw_count = input(f"  {C.GREY}how many games? [all]:{C.RESET} ").strip()
         try:
             count = int(raw_count) if raw_count else len(self.games)
+            if count <= 0:
+                raise ValueError
         except ValueError:
             C.err("input", "invalid count")
+            time.sleep(1.0)
             return
         count = min(count, len(self.games))
 
@@ -850,14 +931,18 @@ class App:
         raw_hours = input(f"  {C.GREY}hours per game? [1]:{C.RESET} ").strip()
         try:
             hours = float(raw_hours) if raw_hours else 1.0
+            if hours <= 0:
+                raise ValueError
         except ValueError:
             C.err("input", "invalid hours")
+            time.sleep(1.0)
             return
 
         # select games: prefer unused, rotate through used if necessary
         selected = self._select_games(count)
         if not selected:
             C.err("games", "none selected")
+            time.sleep(1.0)
             return
 
         duration_ms = int(hours * 3600 * 1000)
@@ -895,9 +980,9 @@ class App:
             selected_ids = unused_ids[:count]
         else:
             # fill with unused, then rotate through used
-            selected_ids = unused_ids
+            selected_ids = list(unused_ids)
+            remaining = count - len(selected_ids)
             if used_ids:
-                remaining = count - len(selected_ids)
                 rotated = used_ids[remaining:] + used_ids[:remaining]
                 selected_ids.extend(rotated[:remaining])
 
@@ -971,6 +1056,8 @@ class App:
             elif choice == "3":
                 self.set_fingerprint()
             elif choice in ("4", ""):
+                if self.client:
+                    self.client.close()
                 break
             else:
                 C.warn("input", "invalid option")

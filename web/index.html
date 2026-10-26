@@ -1,0 +1,1184 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Discord Badge Spoofer — GUI</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    /* =================== RESET & VARIABLES =================== */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg-deep:      #0a0a12;
+      --bg-surface:   rgba(18, 18, 32, 0.65);
+      --bg-card:      rgba(25, 25, 50, 0.55);
+      --bg-input:     rgba(30, 30, 55, 0.7);
+      --border-glass: rgba(255, 255, 255, 0.07);
+      --border-focus: rgba(168, 85, 247, 0.5);
+      --accent-purple: #a855f7;
+      --accent-orange: #f97316;
+      --accent-green:  #22c55e;
+      --accent-red:    #ef4444;
+      --accent-yellow: #eab308;
+      --text-primary:  #f1f5f9;
+      --text-secondary:#94a3b8;
+      --text-dim:      #64748b;
+      --glow-purple:   0 0 30px rgba(168, 85, 247, 0.15);
+      --glow-orange:   0 0 30px rgba(249, 115, 22, 0.15);
+      --glass-blur:    16px;
+      --radius:        16px;
+      --radius-sm:     10px;
+      --transition:    0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, sans-serif;
+      background: var(--bg-deep);
+      color: var(--text-primary);
+      min-height: 100vh;
+      overflow-x: hidden;
+      direction: ltr;
+    }
+
+    /* =================== ANIMATED BACKGROUND =================== */
+    .bg-orbs {
+      position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden;
+    }
+    .bg-orbs .orb {
+      position: absolute; border-radius: 50%; filter: blur(100px); opacity: 0.18;
+      animation: orbFloat 18s ease-in-out infinite alternate;
+    }
+    .bg-orbs .orb:nth-child(1) {
+      width: 500px; height: 500px; background: var(--accent-purple);
+      top: -10%; left: -5%; animation-delay: 0s;
+    }
+    .bg-orbs .orb:nth-child(2) {
+      width: 400px; height: 400px; background: var(--accent-orange);
+      bottom: -10%; right: -5%; animation-delay: -6s;
+    }
+    .bg-orbs .orb:nth-child(3) {
+      width: 300px; height: 300px; background: #6366f1;
+      top: 50%; left: 50%; transform: translate(-50%, -50%); animation-delay: -12s;
+    }
+    @keyframes orbFloat {
+      0%   { transform: translate(0, 0) scale(1); }
+      50%  { transform: translate(30px, -40px) scale(1.08); }
+      100% { transform: translate(-20px, 30px) scale(0.95); }
+    }
+
+    /* =================== LAYOUT =================== */
+    .app {
+      position: relative; z-index: 1;
+      max-width: 880px; margin: 0 auto; padding: 32px 20px 60px;
+    }
+
+    /* =================== HEADER =================== */
+    .header {
+      text-align: center; margin-bottom: 36px; animation: fadeInDown 0.7s ease-out;
+    }
+    .header .logo {
+      font-size: 2rem; font-weight: 800; letter-spacing: -0.5px;
+      background: linear-gradient(135deg, var(--accent-purple), var(--accent-orange));
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .header .subtitle {
+      color: var(--text-secondary); font-size: 0.85rem; margin-top: 4px;
+    }
+
+    /* =================== GLASS CARD =================== */
+    .card {
+      position: relative;
+      z-index: 10;
+      background: var(--bg-card);
+      backdrop-filter: blur(var(--glass-blur));
+      -webkit-backdrop-filter: blur(var(--glass-blur));
+      border: 1px solid var(--border-glass);
+      border-radius: var(--radius);
+      padding: 28px;
+      margin-bottom: 20px;
+      box-shadow: var(--glow-purple);
+      transition: box-shadow var(--transition), transform var(--transition);
+      animation: fadeInUp 0.6s ease-out both;
+    }
+    .card:hover {
+      box-shadow: var(--glow-purple), 0 8px 32px rgba(0,0,0,0.3);
+      transform: translateY(-2px);
+    }
+    .card:has(.help-wrap:hover),
+    .card:has(.help-popup.pinned),
+    .card.has-active-popup {
+      z-index: 9999 !important;
+    }
+    .card:nth-child(2) { animation-delay: 0.08s; }
+    .card:nth-child(3) { animation-delay: 0.16s; }
+    .card:nth-child(4) { animation-delay: 0.24s; }
+
+    .card-title {
+      display: flex; align-items: center; gap: 10px;
+      font-size: 1.05rem; font-weight: 700; margin-bottom: 18px;
+    }
+    .card-title .icon {
+      width: 32px; height: 32px; border-radius: 8px; display: grid; place-items: center;
+      font-size: 1rem;
+    }
+    .card-title .icon.purple { background: rgba(168,85,247,0.15); color: var(--accent-purple); }
+    .card-title .icon.orange { background: rgba(249,115,22,0.15); color: var(--accent-orange); }
+    .card-title .icon.green  { background: rgba(34,197,94,0.15);  color: var(--accent-green);  }
+
+    /* =================== STATUS BAR =================== */
+    .status-bar {
+      display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 20px;
+      animation: fadeInUp 0.5s ease-out;
+    }
+    .status-pill {
+      display: flex; align-items: center; gap: 6px;
+      background: var(--bg-card); backdrop-filter: blur(var(--glass-blur));
+      border: 1px solid var(--border-glass); border-radius: 100px;
+      padding: 8px 16px; font-size: 0.78rem; font-weight: 500;
+      transition: var(--transition);
+    }
+    .status-pill .dot {
+      width: 8px; height: 8px; border-radius: 50%;
+    }
+    .status-pill .dot.red    { background: var(--accent-red); box-shadow: 0 0 8px var(--accent-red); }
+    .status-pill .dot.green  { background: var(--accent-green); box-shadow: 0 0 8px var(--accent-green); }
+    .status-pill .dot.yellow { background: var(--accent-yellow); box-shadow: 0 0 8px var(--accent-yellow); }
+
+    /* =================== INPUTS =================== */
+    .field { margin-bottom: 16px; }
+    .field label {
+      display: block; font-size: 0.8rem; font-weight: 600;
+      color: var(--text-secondary); margin-bottom: 6px;
+    }
+    .field input, .field textarea {
+      width: 100%; padding: 12px 16px; font-family: 'Inter', monospace;
+      font-size: 0.85rem; color: var(--text-primary);
+      background: var(--bg-input); border: 1px solid var(--border-glass);
+      border-radius: var(--radius-sm); outline: none;
+      transition: border-color var(--transition), box-shadow var(--transition);
+      direction: ltr; text-align: left;
+    }
+    .field input::placeholder, .field textarea::placeholder {
+      color: var(--text-dim);
+    }
+    .field input:focus, .field textarea:focus {
+      border-color: var(--border-focus);
+      box-shadow: 0 0 0 3px rgba(168, 85, 247, 0.1);
+    }
+    .field textarea { resize: vertical; min-height: 56px; }
+    .field .hint {
+      font-size: 0.72rem; color: var(--text-dim); margin-top: 4px;
+    }
+
+    .inline-fields {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 14px;
+    }
+    @media (max-width: 560px) {
+      .inline-fields { grid-template-columns: 1fr; }
+    }
+
+    /* =================== USER PROFILE BANNER =================== */
+    .user-banner {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 14px; background: rgba(88, 101, 242, 0.12);
+      border: 1px solid rgba(88, 101, 242, 0.3);
+      border-radius: var(--radius-sm); padding: 14px 18px;
+      margin-bottom: 20px;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+      animation: fadeInDown 0.4s ease-out;
+      flex-wrap: wrap;
+    }
+    .user-banner.error {
+      background: rgba(239, 68, 68, 0.1);
+      border-color: rgba(239, 68, 68, 0.35);
+    }
+    .user-banner-left {
+      display: flex; align-items: center; gap: 14px; min-width: 0;
+    }
+    .user-avatar-wrap {
+      position: relative; flex-shrink: 0;
+    }
+    .user-avatar {
+      width: 48px; height: 48px; border-radius: 50%;
+      border: 2px solid var(--accent-purple); object-fit: cover;
+      background: var(--bg-input); display: block;
+    }
+    .user-online-badge {
+      position: absolute; bottom: 0; right: 0;
+      width: 14px; height: 14px; border-radius: 50%;
+      background: var(--accent-green);
+      border: 2px solid var(--bg-deep);
+    }
+    .user-details {
+      display: flex; flex-direction: column; gap: 2px; min-width: 0;
+    }
+    .user-global-name {
+      font-size: 0.96rem; font-weight: 700; color: #fff;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .user-handle {
+      font-size: 0.78rem; color: var(--accent-purple);
+      font-family: 'JetBrains Mono', monospace; font-weight: 600;
+    }
+    .user-id-sub {
+      font-size: 0.68rem; color: var(--text-dim);
+    }
+    .user-status-tag {
+      flex-shrink: 0; display: inline-flex; align-items: center; gap: 6px;
+      font-size: 0.74rem; font-weight: 600; padding: 5px 14px; border-radius: 99px;
+      background: rgba(34, 197, 94, 0.15); color: var(--accent-green);
+      border: 1px solid rgba(34, 197, 94, 0.3);
+    }
+    .user-status-tag.err {
+      background: rgba(239, 68, 68, 0.15); color: var(--accent-red);
+      border-color: rgba(239, 68, 68, 0.3);
+    }
+
+    /* =================== BUTTONS =================== */
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+      padding: 12px 28px; font-family: 'Inter', sans-serif;
+      font-size: 0.85rem; font-weight: 600; border: none; border-radius: var(--radius-sm);
+      cursor: pointer; transition: all var(--transition); position: relative; overflow: hidden;
+    }
+    .btn::after {
+      content: ''; position: absolute; inset: 0;
+      background: linear-gradient(135deg, rgba(255,255,255,0.1), transparent);
+      opacity: 0; transition: opacity var(--transition);
+    }
+    .btn:hover::after { opacity: 1; }
+
+    .btn-primary {
+      background: linear-gradient(135deg, var(--accent-purple), #7c3aed);
+      color: #fff; box-shadow: 0 4px 16px rgba(168, 85, 247, 0.3);
+    }
+    .btn-primary:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 6px 24px rgba(168, 85, 247, 0.4);
+    }
+    .btn-primary:active { transform: translateY(0); }
+
+    .btn-orange {
+      background: linear-gradient(135deg, var(--accent-orange), #ea580c);
+      color: #fff; box-shadow: 0 4px 16px rgba(249, 115, 22, 0.3);
+    }
+    .btn-orange:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 6px 24px rgba(249, 115, 22, 0.4);
+    }
+
+    .btn-outline {
+      background: transparent;
+      border: 1px solid var(--border-glass); color: var(--text-secondary);
+    }
+    .btn-outline:hover {
+      border-color: var(--accent-purple); color: var(--text-primary);
+      background: rgba(168, 85, 247, 0.08);
+    }
+
+    .btn-ghost {
+      background: rgba(255,255,255,0.04); color: var(--text-secondary);
+      border: 1px solid transparent;
+    }
+    .btn-ghost:hover {
+      background: rgba(255,255,255,0.08); color: var(--text-primary);
+    }
+
+    .btn:disabled {
+      opacity: 0.5; cursor: not-allowed; transform: none !important;
+    }
+
+    .btn-row {
+      display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px;
+    }
+
+    /* =================== RANGE SLIDER =================== */
+    .range-wrapper {
+      display: flex; align-items: center; gap: 14px;
+    }
+    .range-wrapper input[type="range"] {
+      -webkit-appearance: none; appearance: none; flex: 1; height: 6px;
+      background: var(--bg-input); border-radius: 99px; outline: none; border: none; padding: 0;
+    }
+    .range-wrapper input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none; width: 20px; height: 20px; border-radius: 50%;
+      background: linear-gradient(135deg, var(--accent-purple), var(--accent-orange));
+      cursor: pointer; box-shadow: 0 2px 8px rgba(168,85,247,0.4);
+      transition: transform 0.15s ease;
+    }
+    .range-wrapper input[type="range"]::-webkit-slider-thumb:hover {
+      transform: scale(1.15);
+    }
+    .range-value {
+      min-width: 50px; text-align: center; font-weight: 700;
+      font-size: 1rem; color: var(--accent-orange);
+      background: rgba(249,115,22,0.1); padding: 4px 12px;
+      border-radius: 8px; font-variant-numeric: tabular-nums;
+    }
+
+    /* =================== LOG CONSOLE =================== */
+    .log-box {
+      background: rgba(10, 10, 20, 0.8); border: 1px solid var(--border-glass);
+      border-radius: var(--radius-sm); padding: 16px; max-height: 320px;
+      overflow-y: auto; font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+      font-size: 0.76rem; line-height: 1.7; direction: ltr; text-align: left;
+      scroll-behavior: smooth;
+    }
+    .log-box::-webkit-scrollbar { width: 6px; }
+    .log-box::-webkit-scrollbar-track { background: transparent; }
+    .log-box::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 99px; }
+
+    .log-line { padding: 2px 0; }
+    .log-line.ok     { color: var(--accent-green); }
+    .log-line.warn   { color: var(--accent-yellow); }
+    .log-line.err    { color: var(--accent-red); }
+    .log-line.info   { color: var(--text-secondary); }
+    .log-line.sent   { color: #38bdf8; }
+
+    /* =================== PROGRESS =================== */
+    .progress-wrap {
+      margin-top: 16px; display: none;
+    }
+    .progress-wrap.active { display: block; }
+    .progress-bar-bg {
+      width: 100%; height: 8px; background: var(--bg-input);
+      border-radius: 99px; overflow: hidden;
+    }
+    .progress-bar-fill {
+      height: 100%; width: 0%; border-radius: 99px;
+      background: linear-gradient(90deg, var(--accent-purple), var(--accent-orange));
+      transition: width 0.4s ease;
+    }
+    .progress-label {
+      display: flex; justify-content: space-between; margin-top: 6px;
+      font-size: 0.75rem; color: var(--text-dim);
+    }
+
+    /* =================== STATS GRID =================== */
+    .stats-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 12px; margin-bottom: 16px;
+    }
+    .stat-card {
+      background: rgba(255,255,255,0.03); border: 1px solid var(--border-glass);
+      border-radius: var(--radius-sm); padding: 16px; text-align: center;
+      transition: var(--transition);
+    }
+    .stat-card:hover { background: rgba(255,255,255,0.06); }
+    .stat-card .stat-value {
+      font-size: 1.5rem; font-weight: 800;
+      background: linear-gradient(135deg, var(--accent-purple), var(--accent-orange));
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+    }
+    .stat-card .stat-label {
+      font-size: 0.72rem; color: var(--text-dim); margin-top: 4px; font-weight: 500;
+    }
+
+    /* =================== TOGGLE =================== */
+    .toggle-row {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 0;
+    }
+    .toggle-row label { font-size: 0.85rem; font-weight: 500; }
+    .toggle {
+      position: relative; width: 44px; height: 24px;
+    }
+    .toggle input { opacity: 0; width: 0; height: 0; }
+    .toggle .slider {
+      position: absolute; inset: 0; background: var(--bg-input);
+      border-radius: 99px; cursor: pointer; transition: var(--transition);
+      border: 1px solid var(--border-glass);
+    }
+    .toggle .slider::before {
+      content: ''; position: absolute; width: 18px; height: 18px;
+      border-radius: 50%; background: var(--text-dim);
+      bottom: 2px; left: 2px; transition: var(--transition);
+    }
+    .toggle input:checked + .slider {
+      background: rgba(168, 85, 247, 0.3); border-color: var(--accent-purple);
+    }
+    .toggle input:checked + .slider::before {
+      transform: translateX(20px); background: var(--accent-purple);
+    }
+
+    /* =================== TOAST =================== */
+    .toast-container {
+      position: fixed; top: 24px; left: 50%; transform: translateX(-50%);
+      z-index: 9999; display: flex; flex-direction: column; gap: 10px;
+    }
+    .toast {
+      background: var(--bg-card); backdrop-filter: blur(20px);
+      border: 1px solid var(--border-glass); border-radius: var(--radius-sm);
+      padding: 14px 22px; font-size: 0.82rem; font-weight: 500;
+      display: flex; align-items: center; gap: 10px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+      animation: toastIn 0.4s ease-out;
+      min-width: 280px;
+    }
+    .toast.success { border-left: 3px solid var(--accent-green); }
+    .toast.error   { border-left: 3px solid var(--accent-red); }
+    .toast.warning { border-left: 3px solid var(--accent-yellow); }
+    .toast.removing { animation: toastOut 0.3s ease-in forwards; }
+
+    @keyframes toastIn {
+      from { opacity: 0; transform: translateY(-20px) scale(0.95); }
+      to   { opacity: 1; transform: translateY(0) scale(1); }
+    }
+    @keyframes toastOut {
+      to { opacity: 0; transform: translateY(-20px) scale(0.95); }
+    }
+
+    /* =================== ANIMATIONS =================== */
+    @keyframes fadeInUp {
+      from { opacity: 0; transform: translateY(24px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes fadeInDown {
+      from { opacity: 0; transform: translateY(-24px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    .spinner {
+      width: 18px; height: 18px; border: 2px solid rgba(255,255,255,0.2);
+      border-top-color: #fff; border-radius: 50%;
+      animation: spin 0.7s linear infinite; display: inline-block;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* =================== MISC =================== */
+    .divider {
+      height: 1px; background: var(--border-glass); margin: 16px 0;
+    }
+    .badge {
+      display: inline-flex; align-items: center; gap: 4px; font-size: 0.7rem;
+      font-weight: 600; padding: 3px 10px; border-radius: 99px;
+    }
+    .badge.purple { background: rgba(168,85,247,0.15); color: var(--accent-purple); }
+    .badge.orange { background: rgba(249,115,22,0.15); color: var(--accent-orange); }
+    .badge.green  { background: rgba(34,197,94,0.15); color: var(--accent-green); }
+
+    .footer {
+      text-align: center; margin-top: 40px; color: var(--text-dim);
+      font-size: 0.72rem; animation: fadeInUp 0.8s ease-out 0.3s both;
+    }
+    .footer a { color: var(--accent-purple); text-decoration: none; }
+    .footer a:hover { text-decoration: underline; }
+
+    /* =================== TOOLTIP HELP =================== */
+    .help-trigger {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 20px; height: 20px; border-radius: 50%;
+      background: rgba(168, 85, 247, 0.15); color: var(--accent-purple);
+      font-size: 0.68rem; font-weight: 700; cursor: help;
+      margin-left: 6px; vertical-align: middle;
+      border: 1px solid rgba(168, 85, 247, 0.25);
+      transition: all var(--transition); position: relative; flex-shrink: 0;
+    }
+    .help-trigger:hover {
+      background: rgba(168, 85, 247, 0.3);
+      border-color: var(--accent-purple);
+      transform: scale(1.1);
+      box-shadow: 0 0 12px rgba(168, 85, 247, 0.3);
+    }
+    .help-wrap {
+      position: relative; display: inline-flex; align-items: center;
+      z-index: 10000;
+    }
+    .help-popup {
+      position: absolute; top: calc(100% + 10px); left: 0;
+      width: 380px; max-width: 90vw;
+      max-height: 80vh; overflow-y: auto;
+      background: rgba(14, 14, 28, 0.98);
+      backdrop-filter: blur(28px); -webkit-backdrop-filter: blur(28px);
+      border: 1px solid rgba(168, 85, 247, 0.35);
+      border-radius: var(--radius); padding: 20px;
+      box-shadow: 0 24px 64px rgba(0,0,0,0.85), 0 0 35px rgba(168, 85, 247, 0.25);
+      z-index: 10001; pointer-events: none;
+      opacity: 0; transform: translateY(-8px) scale(0.97);
+      transition: opacity 0.25s ease, transform 0.25s ease;
+      direction: ltr; text-align: left;
+    }
+    .help-popup::-webkit-scrollbar { width: 5px; }
+    .help-popup::-webkit-scrollbar-thumb { background: rgba(168,85,247,0.3); border-radius: 10px; }
+    .help-popup.open-upwards {
+      top: auto; bottom: calc(100% + 10px);
+      transform: translateY(8px) scale(0.97);
+    }
+    .help-wrap:hover .help-popup,
+    .help-popup.pinned {
+      opacity: 1; transform: translateY(0) scale(1); pointer-events: auto;
+    }
+    .help-wrap:hover .help-popup.open-upwards,
+    .help-popup.pinned.open-upwards {
+      opacity: 1; transform: translateY(0) scale(1); pointer-events: auto;
+    }
+    .help-popup .help-title {
+      font-size: 0.85rem; font-weight: 700; color: var(--accent-purple);
+      margin-bottom: 10px; display: flex; align-items: center; gap: 6px;
+    }
+    .help-popup .help-steps {
+      list-style: none; padding: 0; margin: 0;
+    }
+    .help-popup .help-steps li {
+      display: flex; gap: 10px; padding: 7px 0;
+      font-size: 0.78rem; color: var(--text-secondary); line-height: 1.6;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+    }
+    .help-popup .help-steps li:last-child { border-bottom: none; }
+    .help-popup .step-num {
+      flex-shrink: 0; width: 22px; height: 22px; border-radius: 50%;
+      background: rgba(168, 85, 247, 0.15); color: var(--accent-purple);
+      font-size: 0.7rem; font-weight: 700;
+      display: grid; place-items: center;
+    }
+    .help-popup kbd {
+      display: inline-block; padding: 1px 6px; font-size: 0.7rem;
+      font-family: 'Inter', monospace; background: rgba(255,255,255,0.08);
+      border: 1px solid rgba(255,255,255,0.12); border-radius: 4px;
+      color: var(--accent-orange); font-weight: 600; direction: ltr;
+    }
+    .help-popup .help-note {
+      margin-top: 10px; padding: 10px 12px;
+      background: rgba(234, 179, 8, 0.08); border: 1px solid rgba(234, 179, 8, 0.15);
+      border-radius: 8px; font-size: 0.72rem; color: var(--accent-yellow);
+      line-height: 1.6;
+    }
+
+    /* hide sections until ready */
+    .section-hidden { display: none; }
+  </style>
+</head>
+<body>
+
+  <!-- Animated Background -->
+  <div class="bg-orbs">
+    <div class="orb"></div>
+    <div class="orb"></div>
+    <div class="orb"></div>
+  </div>
+
+  <div class="app">
+
+    <!-- HEADER -->
+    <header class="header">
+      <div class="logo">⚡ Discord Badge Spoofer</div>
+      <div class="subtitle">Profile Game & Playtime Badge Spoofer — Web GUI</div>
+    </header>
+
+    <!-- STATUS BAR -->
+    <div class="status-bar" id="statusBar">
+      <div class="status-pill">
+        <span class="dot red" id="dotToken"></span>
+        <span id="lblToken">Token: Not set</span>
+      </div>
+      <div class="status-pill">
+        <span class="dot red" id="dotCookie"></span>
+        <span id="lblCookie">Cookie: Not set</span>
+      </div>
+      <div class="status-pill">
+        <span class="dot yellow" id="dotFingerprint"></span>
+        <span id="lblFingerprint">Fingerprint: Optional</span>
+      </div>
+      <div class="status-pill">
+        <span class="dot red" id="dotGames"></span>
+        <span id="lblGames">Games: —</span>
+      </div>
+    </div>
+
+    <!-- AUTH CARD -->
+    <div class="card" id="authCard">
+      <div class="card-title">
+        <div class="icon purple">🔑</div>
+        <span>Authentication</span>
+      </div>
+
+      <!-- DISCORD USER VERIFICATION BANNER -->
+      <div class="user-banner" id="userBanner" style="display: none;">
+        <div class="user-banner-left">
+          <div class="user-avatar-wrap">
+            <img id="userAvatar" class="user-avatar" src="" alt="Avatar">
+            <div class="user-online-badge"></div>
+          </div>
+          <div class="user-details">
+            <div class="user-global-name" id="userGlobalName">Discord Account</div>
+            <div class="user-handle" id="userHandle">@username</div>
+            <div class="user-id-sub" id="userId">ID: —</div>
+          </div>
+        </div>
+        <div class="user-status-tag" id="userStatusTag">
+          <span class="dot green"></span> Verified Account
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="tokenInput">
+          Discord Token
+          <span class="help-wrap">
+            <span class="help-trigger">?</span>
+            <div class="help-popup">
+              <div class="help-title">🔑 How to get your Token</div>
+              <ol class="help-steps">
+                <li><span class="step-num">1</span><span>Open the <strong>Discord app</strong> on desktop or web browser</span></li>
+                <li><span class="step-num">2</span><span>Press <kbd>Ctrl + Shift + I</kbd> to open Developer Tools</span></li>
+                <li><span class="step-num">3</span><span>Go to the <strong>Network</strong> tab</span></li>
+                <li><span class="step-num">4</span><span>In the filter box, type <kbd>/api</kbd> and interact with Discord (e.g. switch channel)</span></li>
+                <li><span class="step-num">5</span><span>Click on any request, then select the <strong>Headers</strong> tab</span></li>
+                <li><span class="step-num">6</span><span>Find <kbd>authorization</kbd> under Request Headers and copy the entire string</span></li>
+              </ol>
+              <div class="help-note">⚠️ Never share this token with anyone — anyone who has it has full control of your account.</div>
+            </div>
+          </span>
+        </label>
+        <input type="password" id="tokenInput" placeholder="Enter your Discord user token..." autocomplete="off">
+        <div class="hint">🔒 Stored locally only in science_state.json — never shared externally</div>
+      </div>
+
+      <div class="field">
+        <label for="cookieInput">
+          Cookie (cf_clearance)
+          <span class="help-wrap">
+            <span class="help-trigger">?</span>
+            <div class="help-popup">
+              <div class="help-title">🍪 How to get your Cookie</div>
+              <ol class="help-steps">
+                <li><span class="step-num">1</span><span>Open the <strong>Discord desktop app</strong></span></li>
+                <li><span class="step-num">2</span><span>Press <kbd>Ctrl + Shift + I</kbd> to open DevTools</span></li>
+                <li><span class="step-num">3</span><span>Go to the <strong>Network</strong> tab</span></li>
+                <li><span class="step-num">4</span><span>In the filter box, type <kbd>science</kbd></span></li>
+                <li><span class="step-num">5</span><span>Wait for a <strong>/science</strong> request to appear (or launch any game to trigger it)</span></li>
+                <li><span class="step-num">6</span><span>Click the request → <strong>Headers</strong> tab → find <kbd>cookie</kbd></span></li>
+                <li><span class="step-num">7</span><span>Copy the entire value (contains <kbd>cf_clearance=...</kbd>)</span></li>
+              </ol>
+              <div class="help-note">💡 Cookies expire periodically — if requests fail, refresh it using these steps.</div>
+            </div>
+          </span>
+        </label>
+        <textarea id="cookieInput" rows="2" placeholder="Paste the Cookie header from the /science request in DevTools..."></textarea>
+        <div class="hint">Required to bypass Cloudflare protection — copy from the Network tab</div>
+      </div>
+
+      <div class="field">
+        <label for="fingerprintInput">
+          Executable Fingerprint <span class="badge purple">Optional</span>
+          <span class="help-wrap">
+            <span class="help-trigger">?</span>
+            <div class="help-popup">
+              <div class="help-title">🔏 What is an Executable Fingerprint?</div>
+              <ol class="help-steps">
+                <li><span class="step-num">1</span><span>Fingerprint is only needed for the <strong>Games Played count badge</strong> — Playtime hours badge works without it</span></li>
+                <li><span class="step-num">2</span><span>In DevTools → Network, filter by <kbd>science</kbd></span></li>
+                <li><span class="step-num">3</span><span>Launch any game recognized by Discord</span></li>
+                <li><span class="step-num">4</span><span>Look for a <strong>launch_game</strong> event in the Payload</span></li>
+                <li><span class="step-num">5</span><span>Copy the <kbd>executable_fingerprint</kbd> value</span></li>
+              </ol>
+              <div class="help-note">💡 You can test without it first — users report badges unlocking without a fingerprint.</div>
+            </div>
+          </span>
+        </label>
+        <input type="text" id="fingerprintInput" placeholder="Leave empty if you don't have one...">
+        <div class="hint">Only required for games count badge — can be generated later</div>
+      </div>
+
+      <div class="btn-row">
+        <button class="btn btn-primary" id="btnSaveAuth" onclick="saveAuth()">
+          💾 Save Authentication
+        </button>
+        <button class="btn btn-outline" id="btnRefreshAuth" onclick="refreshAuth()">
+          🔄 Refresh Token
+        </button>
+        <button class="btn btn-ghost" id="btnToggleToken" onclick="toggleTokenVisibility()">
+          👁 Show/Hide Token
+        </button>
+      </div>
+    </div>
+
+    <!-- STATS CARD -->
+    <div class="card" id="statsCard">
+      <div class="card-title">
+        <div class="icon green">📊</div>
+        <span>Statistics</span>
+      </div>
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-value" id="statGames">0</div>
+          <div class="stat-label">Available Games</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="statClaimed">0</div>
+          <div class="stat-label">Claimed Games</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="statHours">0</div>
+          <div class="stat-label">Claimed Hours</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="statUsed">0</div>
+          <div class="stat-label">Previously Used</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CLAIM CARD -->
+    <div class="card" id="claimCard">
+      <div class="card-title">
+        <div class="icon orange">🎮</div>
+        <span>Claim Playtime</span>
+      </div>
+
+      <div class="inline-fields">
+        <div class="field">
+          <label for="gameCountInput">Number of Games</label>
+          <input type="number" id="gameCountInput" min="1" value="50" placeholder="50">
+          <div class="hint">Leave empty to use all available games</div>
+        </div>
+        <div class="field">
+          <label>Hours per game: <span id="hoursLabel" style="color:var(--accent-orange); font-weight:700;">100</span></label>
+          <div class="range-wrapper" style="margin-top: 8px;">
+            <input type="range" id="hoursRange" min="1" max="5000" value="100" oninput="updateHoursLabel()">
+            <div class="range-value" id="hoursValue">100</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="field" style="margin-top: 8px;">
+        <label>Or enter custom hours manually</label>
+        <input type="number" id="hoursCustom" min="0.1" step="0.1" placeholder="Optional — overrides slider above">
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="btn-row">
+        <button class="btn btn-orange" id="btnClaim" onclick="startClaim()">
+          🚀 Start Claiming
+        </button>
+        <button class="btn btn-outline" id="btnStop" onclick="stopClaim()" disabled>
+          ⏹ Stop
+        </button>
+      </div>
+
+      <!-- Progress -->
+      <div class="progress-wrap" id="progressWrap">
+        <div class="progress-bar-bg">
+          <div class="progress-bar-fill" id="progressFill"></div>
+        </div>
+        <div class="progress-label">
+          <span id="progressText">0 / 0 games</span>
+          <span id="progressPercent">0%</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- LOG CARD -->
+    <div class="card" id="logCard">
+      <div class="card-title">
+        <div class="icon purple">📋</div>
+        <span>Activity Log</span>
+        <button class="btn btn-ghost" style="margin-left: auto; font-size: 0.72rem; padding: 6px 12px;"
+                onclick="clearLog()">🗑 Clear</button>
+      </div>
+      <div class="log-box" id="logBox">
+        <div class="log-line info">Ready! Enter your credentials above and click "Save Authentication" to begin...</div>
+      </div>
+    </div>
+
+    <!-- FOOTER -->
+    <div class="footer">
+      Discord Badge Spoofer GUI — runs 100% locally ·
+      <a href="https://github.com/revere-group/discord-badge-spoofer" target="_blank">GitHub</a>
+    </div>
+
+  </div>
+
+  <!-- TOAST CONTAINER -->
+  <div class="toast-container" id="toastContainer"></div>
+
+  <script>
+    /* ============================================================
+       API HELPERS
+       ============================================================ */
+    const API = '/api';
+
+    async function apiCall(endpoint, body = {}) {
+      try {
+        const res = await fetch(`${API}${endpoint}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        return await res.json();
+      } catch (e) {
+        return { ok: false, error: e.message };
+      }
+    }
+
+    /* ============================================================
+       TOAST NOTIFICATIONS
+       ============================================================ */
+    function toast(msg, type = 'success') {
+      const container = document.getElementById('toastContainer');
+      const el = document.createElement('div');
+      el.className = `toast ${type}`;
+      const icons = { success: '✅', error: '❌', warning: '⚠️' };
+      el.innerHTML = `<span>${icons[type] || ''}</span><span>${msg}</span>`;
+      container.appendChild(el);
+      setTimeout(() => {
+        el.classList.add('removing');
+        setTimeout(() => el.remove(), 300);
+      }, 3500);
+    }
+
+    /* ============================================================
+       LOG
+       ============================================================ */
+    function log(msg, cls = 'info') {
+      const box = document.getElementById('logBox');
+      const ts = new Date().toLocaleTimeString('en-GB', { hour12: false });
+      const line = document.createElement('div');
+      line.className = `log-line ${cls}`;
+      const glyphs = { ok: '✓', err: '✗', warn: '!', sent: '→', info: '·' };
+      line.textContent = `[${ts}] ${glyphs[cls] || '·'} ${msg}`;
+      box.appendChild(line);
+      box.scrollTop = box.scrollHeight;
+    }
+
+    function clearLog() {
+      document.getElementById('logBox').innerHTML = '';
+      log('Log cleared');
+    }
+
+    /* ============================================================
+       STATUS DOTS
+       ============================================================ */
+    function setDot(id, color) {
+      const el = document.getElementById(id);
+      el.className = `dot ${color}`;
+    }
+
+    function updateStatus(data) {
+      // token
+      if (data.has_token) {
+        setDot('dotToken', 'green');
+        document.getElementById('lblToken').textContent = 'Token: ✓ Saved';
+      } else {
+        setDot('dotToken', 'red');
+        document.getElementById('lblToken').textContent = 'Token: Not set';
+      }
+      // cookie
+      if (data.has_cookie) {
+        setDot('dotCookie', 'green');
+        document.getElementById('lblCookie').textContent = 'Cookie: ✓ Saved';
+      } else {
+        setDot('dotCookie', 'red');
+        document.getElementById('lblCookie').textContent = 'Cookie: Not set';
+      }
+      // fingerprint
+      if (data.fingerprint) {
+        setDot('dotFingerprint', 'green');
+        document.getElementById('lblFingerprint').textContent = 'Fingerprint: ✓ Set';
+      } else {
+        setDot('dotFingerprint', 'yellow');
+        document.getElementById('lblFingerprint').textContent = 'Fingerprint: Optional';
+      }
+      // games
+      if (data.games_count > 0) {
+        setDot('dotGames', 'green');
+        document.getElementById('lblGames').textContent = `Games: ${data.games_count}`;
+      }
+      // stats
+      document.getElementById('statGames').textContent = data.games_count || 0;
+      document.getElementById('statClaimed').textContent = data.total_games_claimed || 0;
+      document.getElementById('statHours').textContent = formatNum(data.total_hours_claimed || 0);
+      document.getElementById('statUsed').textContent = data.used_games_count || 0;
+
+      // update max on game count input
+      const gcInput = document.getElementById('gameCountInput');
+      if (data.games_count) gcInput.max = data.games_count;
+
+      // user profile verification banner
+      const banner = document.getElementById('userBanner');
+      if (data.user) {
+        if (data.user.valid) {
+          banner.style.display = 'flex';
+          banner.className = 'user-banner';
+          document.getElementById('userAvatar').src = data.user.avatar_url;
+          document.getElementById('userGlobalName').textContent = data.user.global_name;
+          document.getElementById('userHandle').textContent = `@${data.user.username}`;
+          document.getElementById('userId').textContent = `User ID: ${data.user.id}`;
+          const tag = document.getElementById('userStatusTag');
+          tag.className = 'user-status-tag';
+          tag.innerHTML = '<span class="dot green"></span> Connected';
+        } else {
+          banner.style.display = 'flex';
+          banner.className = 'user-banner error';
+          document.getElementById('userAvatar').src = 'https://cdn.discordapp.com/embed/avatars/0.png';
+          document.getElementById('userGlobalName').textContent = 'Invalid Token';
+          document.getElementById('userHandle').textContent = data.user.error || 'Token rejected by Discord';
+          document.getElementById('userId').textContent = 'Please re-copy authorization header';
+          const tag = document.getElementById('userStatusTag');
+          tag.className = 'user-status-tag err';
+          tag.innerHTML = '<span class="dot red"></span> Rejected';
+        }
+      } else {
+        banner.style.display = 'none';
+      }
+    }
+
+    function formatNum(n) {
+      return n >= 1000 ? (n / 1000).toFixed(1) + 'k' : Math.round(n).toString();
+    }
+
+    /* ============================================================
+       AUTH
+       ============================================================ */
+    async function saveAuth() {
+      const tokenEl = document.getElementById('tokenInput');
+      const cookieEl = document.getElementById('cookieInput');
+      const token = tokenEl.dataset.prefilled === '1' ? '' : tokenEl.value.trim();
+      const cookie = cookieEl.dataset.prefilled === '1' ? '' : cookieEl.value.trim();
+      const fingerprint = document.getElementById('fingerprintInput').value.trim();
+
+      if (!token && !cookie && !fingerprint && !tokenEl.dataset.prefilled && !cookieEl.dataset.prefilled) {
+        toast('Please enter token or cookie first', 'warning');
+        return;
+      }
+
+      const btn = document.getElementById('btnSaveAuth');
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span> Saving...';
+
+      log('Saving authentication credentials...', 'info');
+      const res = await apiCall('/save_auth', { token, cookie, fingerprint });
+
+      btn.disabled = false;
+      btn.innerHTML = '💾 Save Authentication';
+
+      if (res.ok) {
+        toast('Authentication saved successfully', 'success');
+        log('Authentication saved', 'ok');
+        if (res.status) updateStatus(res.status);
+      } else {
+        toast(res.error || 'Failed to save', 'error');
+        log(`Error: ${res.error}`, 'err');
+      }
+    }
+
+    async function refreshAuth() {
+      const btn = document.getElementById('btnRefreshAuth');
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span> Refreshing...';
+
+      log('Refreshing analytics token...', 'info');
+      const res = await apiCall('/refresh_auth');
+
+      btn.disabled = false;
+      btn.innerHTML = '🔄 Refresh Token';
+
+      if (res.ok) {
+        toast('Token refreshed successfully', 'success');
+        log('analytics_token refreshed', 'ok');
+        if (res.status) updateStatus(res.status);
+      } else {
+        toast(res.error || 'Failed to refresh token', 'error');
+        log(`Error: ${res.error}`, 'err');
+      }
+    }
+
+    function toggleTokenVisibility() {
+      const inp = document.getElementById('tokenInput');
+      inp.type = inp.type === 'password' ? 'text' : 'password';
+    }
+
+    /* ============================================================
+       HOURS SLIDER
+       ============================================================ */
+    function updateHoursLabel() {
+      const v = document.getElementById('hoursRange').value;
+      document.getElementById('hoursLabel').textContent = v;
+      document.getElementById('hoursValue').textContent = v;
+      document.getElementById('hoursCustom').value = '';
+    }
+
+    /* ============================================================
+       CLAIM
+       ============================================================ */
+    let claimRunning = false;
+    let pollInterval = null;
+
+    async function startClaim() {
+      const customHours = document.getElementById('hoursCustom').value.trim();
+      const hours = customHours ? parseFloat(customHours) : parseInt(document.getElementById('hoursRange').value);
+      const rawCount = document.getElementById('gameCountInput').value.trim();
+      const count = rawCount ? parseInt(rawCount) : 0; // 0 = all
+
+      if (isNaN(hours) || hours <= 0) {
+        toast('Please enter a valid number of hours', 'warning');
+        return;
+      }
+
+      claimRunning = true;
+      document.getElementById('btnClaim').disabled = true;
+      document.getElementById('btnClaim').innerHTML = '<span class="spinner"></span> Running...';
+      document.getElementById('btnStop').disabled = false;
+      document.getElementById('progressWrap').classList.add('active');
+      setProgress(0, 1);
+
+      log(`Starting claim — ${hours} hrs × ${count || 'All'} games`, 'info');
+
+      const res = await apiCall('/claim', { hours, count });
+
+      if (res.ok) {
+        toast('Claim process started!', 'success');
+        log('Request sent — tracking progress...', 'ok');
+        pollProgress();
+      } else {
+        toast(res.error || 'Failed to start claim', 'error');
+        log(`Error: ${res.error}`, 'err');
+        resetClaimUI();
+      }
+    }
+
+    function pollProgress() {
+      pollInterval = setInterval(async () => {
+        const res = await apiCall('/progress');
+        if (!res.ok) return;
+
+        const { sent, total, done, logs } = res;
+
+        setProgress(sent, total);
+
+        if (logs && logs.length) {
+          logs.forEach(l => log(l.msg, l.cls));
+        }
+
+        if (done) {
+          clearInterval(pollInterval);
+          pollInterval = null;
+          toast(`Claim complete! ${sent}/${total} games`, 'success');
+          log(`Claim complete — ${sent}/${total} games`, 'ok');
+          resetClaimUI();
+          fetchStatus(); // refresh stats
+        }
+      }, 800);
+    }
+
+    function setProgress(sent, total) {
+      const pct = total > 0 ? Math.round((sent / total) * 100) : 0;
+      document.getElementById('progressFill').style.width = pct + '%';
+      document.getElementById('progressText').textContent = `${sent} / ${total} games`;
+      document.getElementById('progressPercent').textContent = pct + '%';
+    }
+
+    async function stopClaim() {
+      await apiCall('/stop');
+      claimRunning = false;
+      if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+      toast('Operation stopped', 'warning');
+      log('Claim stopped by user', 'warn');
+      resetClaimUI();
+    }
+
+    function resetClaimUI() {
+      claimRunning = false;
+      document.getElementById('btnClaim').disabled = false;
+      document.getElementById('btnClaim').innerHTML = '🚀 Start Claiming';
+      document.getElementById('btnStop').disabled = true;
+    }
+
+    /* ============================================================
+       INIT
+       ============================================================ */
+    async function fetchStatus() {
+      const res = await apiCall('/status');
+      if (res.ok && res.status) {
+        updateStatus(res.status);
+        // pre-fill inputs if data exists
+        if (res.status.has_token) {
+          document.getElementById('tokenInput').value = '•'.repeat(20);
+          document.getElementById('tokenInput').dataset.prefilled = '1';
+        }
+        if (res.status.has_cookie) {
+          document.getElementById('cookieInput').value = '(Previously saved)';
+          document.getElementById('cookieInput').dataset.prefilled = '1';
+        }
+        if (res.status.fingerprint) {
+          document.getElementById('fingerprintInput').value = res.status.fingerprint_preview || '(Saved)';
+        }
+      }
+    }
+
+    // clear prefilled placeholders on focus
+    document.getElementById('tokenInput').addEventListener('focus', function() {
+      if (this.dataset.prefilled === '1') { this.value = ''; this.type = 'password'; delete this.dataset.prefilled; }
+    });
+    document.getElementById('cookieInput').addEventListener('focus', function() {
+      if (this.dataset.prefilled === '1') { this.value = ''; delete this.dataset.prefilled; }
+    });
+
+    // ── TOOLTIP CLICK-TO-PIN & HOVER ELEVATION ──
+    function checkPopupPlacement(wrap) {
+      const popup = wrap.querySelector('.help-popup');
+      if (!popup) return;
+      const rect = wrap.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.bottom;
+      // If less than 340px below and there is space above, open upwards
+      if (spaceBelow < 340 && rect.top > 260) {
+        popup.classList.add('open-upwards');
+      } else {
+        popup.classList.remove('open-upwards');
+      }
+    }
+
+    function closeAllPopups() {
+      document.querySelectorAll('.help-popup.pinned').forEach(p => p.classList.remove('pinned'));
+      document.querySelectorAll('.card.has-active-popup').forEach(c => c.classList.remove('has-active-popup'));
+    }
+
+    document.querySelectorAll('.help-wrap').forEach(wrap => {
+      wrap.addEventListener('mouseenter', () => {
+        checkPopupPlacement(wrap);
+        wrap.closest('.card')?.classList.add('has-active-popup');
+      });
+      wrap.addEventListener('mouseleave', () => {
+        if (!wrap.querySelector('.help-popup.pinned')) {
+          wrap.closest('.card')?.classList.remove('has-active-popup');
+        }
+      });
+    });
+
+    document.querySelectorAll('.help-trigger').forEach(trigger => {
+      trigger.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const wrap = trigger.closest('.help-wrap') || trigger.parentElement;
+        const popup = trigger.nextElementSibling;
+        const wasOpen = popup.classList.contains('pinned');
+        closeAllPopups();
+        if (!wasOpen) {
+          if (wrap) checkPopupPlacement(wrap);
+          popup.classList.add('pinned');
+          trigger.closest('.card')?.classList.add('has-active-popup');
+        }
+      });
+    });
+
+    // close pinned popups when clicking outside
+    document.addEventListener('click', () => {
+      closeAllPopups();
+    });
+
+    // prevent popup clicks from closing themselves
+    document.querySelectorAll('.help-popup').forEach(popup => {
+      popup.addEventListener('click', e => e.stopPropagation());
+    });
+
+    // on load
+    fetchStatus();
+    log('Loading status from server...', 'info');
+  </script>
+</body>
+</html>

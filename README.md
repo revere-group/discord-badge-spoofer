@@ -32,6 +32,21 @@ no dependencies - pure python stdlib (needs python 3.10+).
 - `3` refresh auth - pulls a fresh analytics token and lets you update the cookie
 - `4` exit
 
+## web gui (optional)
+
+prefer a graphical interface? launch the local web gui:
+
+```bash
+python gui.py
+```
+
+or double-click `start_gui.bat` on Windows. it opens at `http://127.0.0.1:8710` featuring:
+- interactive glassmorphism UI with live progress bar and activity log
+- real-time Discord profile verification (shows avatar, handle, and connection status)
+- built-in interactive guide tooltips for retrieving tokens and cookies
+- custom hours slider and game count selector
+
+
 ## how auth works
 
 - `token` - your account token, entered on first run, saved to `science_state.json`

@@ -839,11 +839,11 @@ class App:
         """claim playtime on selected games. prompts for count and hours."""
         if not self._require_ready():
             return
+            
         C = self.console
         print()
         C.info(f"loaded {C.GREEN}{len(self.games)}{C.WHITE} games available")
 
-        # prompt for game count
         raw_count = input(f"  {C.GREY}how many games? [all]:{C.RESET} ").strip()
         try:
             count = int(raw_count) if raw_count else len(self.games)
@@ -852,7 +852,6 @@ class App:
             return
         count = min(count, len(self.games))
 
-        # prompt for hours
         raw_hours = input(f"  {C.GREY}hours per game? [1]:{C.RESET} ").strip()
         try:
             hours = float(raw_hours) if raw_hours else 1.0
@@ -860,7 +859,18 @@ class App:
             C.err("input", "invalid hours")
             return
 
-        # select games: prefer unused, rotate through used if necessary
+        calc_hours = int(count * hours)
+        print(f"\n[!] You are about to send {C.ORANGE}{count}{C.RESET} games at {C.ORANGE}{hours}{C.RESET} hours each.")
+        print(f"[!] Total hours: {C.ORANGE}{calc_hours:,}{C.RESET}")
+
+        if calc_hours > 100000:
+            print("[!] WARNING: This is a massive amount might take days to receive.")
+
+        confirm = input(f"{C.GREY}Do you want to proceed? (y/n): {C.RESET}").strip().lower()
+        if confirm != 'y':
+            print("Cancelled.")
+            return
+
         selected = self._select_games(count)
         if not selected:
             C.err("games", "none selected")
@@ -879,28 +889,49 @@ class App:
             selected,
             lambda g: self.client.build_session(g, duration_ms),
         )
+        
         print()
         C.ok("complete", f"{ok}/{len(selected)} games · {ok * hours:,.0f}h claimed")
-        # accumulate stats
+        
         self.state.total_games_claimed += ok
         self.state.total_hours_claimed += ok * hours
+    
+        
+        history_file = "run_history.json"
+        history = []
+        if os.path.exists(history_file):
+            try:
+                with open(history_file, "r") as f:
+                    history = json.load(f)
+            except:
+                pass
+                
+        username = self.get_current_user()
+        history.append({
+            "date": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "account": username,
+            "games": ok,
+            "hours": hours,
+            "total": ok * hours
+        })
+        
+        with open(history_file, "w") as f:
+            json.dump(history, f, indent=2)
+        
         self.state.save()
 
         C.rule()
-        input(f"  {C.ORANGE}›{C.RESET} press enter to continue")
+        input(f" {C.ORANGE}>{C.RESET} press enter to continue")
         C.rule()
-
     def _select_games(self, count: int) -> list[Game]:
         """select N games, preferring unused ones and rotating through used to avoid repeats."""
         available_ids = {g.id for g in self.games}
         unused_ids = [g.id for g in self.games if g.id not in self.state.used_games]
         used_ids = [gid for gid in self.state.used_games if gid in available_ids]
 
-        # if we have enough unused, take from there
         if len(unused_ids) >= count:
             selected_ids = unused_ids[:count]
         else:
-            # fill with unused, then rotate through used
             selected_ids = unused_ids
             if used_ids:
                 remaining = count - len(selected_ids)
@@ -959,16 +990,34 @@ class App:
             C.clear()
             C.banner()
             print()
+            
+            username = self.get_current_user()
+            C.info(f"logged in as {C.GREEN}{username}{C.RESET}")
+            
             # show stats
             C.info(f"loaded {C.ORANGE}{len(self.games)}{C.WHITE} games")
-            C.info(f"claimed {C.ORANGE}{self.state.total_games_claimed}{C.WHITE} games · {C.ORANGE}{self.state.total_hours_claimed:,.0f}h{C.WHITE} total")
+               
+            last_run = "Never"
+            if os.path.exists("run_history.json"):
+                try:
+                    with open("run_history.json", "r") as f:
+                        hist = json.load(f)
+                        if hist:
+                            last_run = hist[-1].get("date", "Unknown")
+                except:
+                    pass
+            
+            C.info(f"last run {C.ORANGE}{last_run}{C.RESET}")
             C.rule()
             C.info(f"{C.ORANGE}1{C.RESET} · claim games")
             C.info(f"{C.ORANGE}2{C.RESET} · refresh auth")
             C.info(f"{C.ORANGE}3{C.RESET} · set fingerprint")
-            C.info(f"{C.ORANGE}4{C.RESET} · exit")
+            C.info(f"{C.ORANGE}4{C.RESET} · switch profile")
+            C.info(f"{C.ORANGE}5{C.RESET} · view history")
+            C.info(f"{C.ORANGE}6{C.RESET} · exit")
+            
             C.rule()
-            choice = input(f"  {C.ORANGE}›{C.RESET} ").strip()
+            choice = input(f"  {C.ORANGE}>{C.RESET} ").strip()
             print()
             if choice == "1":
                 self.claim_games()
@@ -976,19 +1025,104 @@ class App:
                 self._refresh()
             elif choice == "3":
                 self.set_fingerprint()
-            elif choice in ("4", ""):
+            elif choice == "4":
+                self.switch_profile()
+            elif choice == "5":
+                self.view_history()
+            elif choice == "6":
                 break
             else:
                 C.warn("input", "invalid option")
 
+    def get_current_user(self) -> str:
+        try:
+            token = str(self.state.token).strip()
+            cookie = str(self.state.cookie).strip()
+            
+            req = urllib.request.Request("https://discord.com/api/v9/users/@me")
+            req.add_header("Authorization", token)
+            req.add_header("Cookie", cookie)
+            req.add_header("User-Agent", "Mozilla/5.0")
+            
+            with urllib.request.urlopen(req) as response:
+                if response.status == 200:
+                    data = json.loads(response.read().decode())
+                    return data.get("username", "Unknown")
+                return f"Invalid Token ({response.status})"
+        except Exception as e:
+            return "Offline"
 
-def main() -> None:
+    def view_history(self) -> None: 
+        C = self.console
+        C.clear()
+        C.banner()
+        print()
+        C.info("run history")
+        print()
+        
+        if not os.path.exists("run_history.json"):
+            C.warn("history", "no runs recorded yet")
+            input(f"  {C.GREY}press enter to continue...{C.RESET}")
+            return
+            
+        try:
+            with open("run_history.json", "r") as f:
+                history = json.load(f)
+        except:
+            C.err("history", "failed to read history file")
+            input(f"  {C.GREY}press enter to continue...{C.RESET}")
+            return
+            
+        if not history:
+            C.warn("history", "no runs recorded yet")
+        else:
+            for run in reversed(history[-10:]):
+                date = run.get("date", "Unknown")
+                acc = run.get("account", "Unknown")
+                games = run.get("games", 0)
+                hrs = run.get("hours", 0)
+                total = run.get("total", 0)
+                
+                print(f"  {C.GREY}{date}{C.RESET} | {C.GREEN}{acc}{C.RESET} | {C.ORANGE}{games}{C.RESET} games @ {C.ORANGE}{hrs}{C.RESET}h = {C.ORANGE}{total}{C.RESET}h")
+                
+        print()
+        input(f"  {C.GREY}press enter to continue...{C.RESET}")
+
+    def switch_profile(self) -> None:
+        
+        C = self.console
+        print()
+        C.info("profile manager")
+        
+        current_file = "science_state.json"
+        
+        save_name = input(f"  {C.GREY}Save current profile as (leave blank to skip):{C.RESET} ").strip()
+        if save_name:
+            if os.path.exists(current_file):
+                backup_file = f"science_state_{save_name}.json"
+                os.replace(current_file, backup_file)
+                C.ok("profile", f"saved current account to {backup_file}")
+            else:
+                C.err("profile", "no active account found to save")
+                
+        load_name = input(f"  {C.GREY}Load profile name (leave blank for none):{C.RESET} ").strip()
+        if load_name:
+            load_file = f"science_state_{load_name}.json"
+            if os.path.exists(load_file):
+                os.replace(load_file, current_file)
+                C.ok("profile", f"loaded profile '{load_name}'")
+                print(f"  {C.GREEN}[+] Restarting script to apply changes...{C.RESET}")
+                
+                time.sleep(1.5)
+                os.execv(sys.executable, ['python'] + sys.argv)
+            else:
+                C.err("profile", f"profile '{load_name}' not found")
+
+        time.sleep(2)
+
+if __name__ == "__main__":
     try:
         App().start()
     except KeyboardInterrupt:
         print()
         Console().warn("exit", "interrupted")
-
-
-if __name__ == "__main__":
-    main()

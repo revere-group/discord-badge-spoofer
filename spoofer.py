@@ -57,7 +57,8 @@ GAMES_CDN_URL = "https://cdn.discordapp.com/detectables/games.json"  # used if g
 SUBSCRIBE_URL = "https://www.youtube.com/@solasity?sub_confirmation=1"
 DISCORD_INVITE_LABEL = "discord.gg/QEC6QttWMh"
 DISCORD_INVITE_URL = "https://discord.gg/QEC6QttWMh"
-GATE_WAIT = 10            # seconds before enter is accepted on each setup step
+GITHUB_PROFILE_URL = "https://github.com/hangingserenity"
+GATE_WAIT = 5            # seconds before enter is accepted on each setup step
 
 BATCH_SIZE = 50           # events per /science request
 BATCH_DELAY = 1           # seconds between requests
@@ -315,6 +316,7 @@ class State:
     total_hours_claimed: float = 0.0  # cumulative hours claimed in this session
     subscribed: bool = False  # passed the youtube step once
     joined_discord: bool = False  # passed the discord step once
+    followed_github: bool = False  # passed the github step once
 
     def __post_init__(self) -> None:
         if self.used_games is None:
@@ -696,6 +698,7 @@ class App:
         steps = [
             ("subscribed", "subscribe to", "youtube.com/@solasity", SUBSCRIBE_URL, "subscribed"),
             ("joined_discord", "join", DISCORD_INVITE_LABEL, DISCORD_INVITE_URL, "joined"),
+            ("followed_github", "follow", "github.com/hangingserenity", GITHUB_PROFILE_URL, "followed"),
         ]
         total = len(steps)
         for i, (flag, action, label, url, done) in enumerate(steps, 1):
@@ -712,7 +715,7 @@ class App:
         time.sleep(0.8)
         print()
 
-        if not (self.state.subscribed and self.state.joined_discord):
+        if not (self.state.subscribed and self.state.joined_discord and self.state.followed_github):
             self._gate()
 
         # step 1: token
